@@ -8,7 +8,7 @@ const app= express().use(body_parser.json());
 const api_token=process.env.API_TOKEN;
 const mytoken=process.env.MYTOKEN;
 
-app.listen(8000|| process.env.PORT,()=>{
+app.listen(process.env.PORT,()=>{
     console.log("Wehbhook is listeneing....");
 });
 
