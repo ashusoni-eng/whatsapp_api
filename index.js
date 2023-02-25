@@ -8,6 +8,11 @@ const app=express().use(body_parser.json());
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
 
+app.get('/logs', (req, res) => {
+  const logs = fs.readFileSync('/var/log/render.log', 'utf8');
+  res.send(logs);
+});
+
 app.listen(process.env.PORT,()=>{
     console.log("webhook is listening");
 });
