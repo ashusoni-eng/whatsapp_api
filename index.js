@@ -8,9 +8,11 @@ const app=express().use(body_parser.json());
 
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
+let webData;
 
 
-app.listen(process.env.PORT,()=>{
+
+app.listen(8000||process.env.PORT,()=>{
     console.log("webhook is listening");
 });
 
@@ -37,7 +39,8 @@ app.post("/webhook",(req,res)=>{ //i want some
 
     let body_param=req.body;
 
-    console.log(JSON.stringify(body_param,null,2));
+    // console.log(JSON.stringify(body_param,null,2));
+    webData= JSON.stringify(body_param,null,2);
 
     if(body_param.object){
         console.log("inside body param");
@@ -81,5 +84,5 @@ app.post("/webhook",(req,res)=>{ //i want some
 });
 
 app.get("/",(req,res)=>{
-    res.status(200).send("hello this is webhook setup");
+    res.status(200).send(webData);
 });
