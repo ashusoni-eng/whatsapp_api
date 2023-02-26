@@ -8,7 +8,7 @@ const app=express().use(body_parser.json());
 
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
-let webData;
+let webData={};
 
 
 
@@ -40,8 +40,10 @@ app.post("/webhook",(req,res)=>{ //i want some
     let body_param=req.body;
 
     // console.log(JSON.stringify(body_param,null,2));
-    webData= JSON.stringify(body_param,null,2);
+    webData= body_param;
 
+
+            /*use to send auto reply when someone send message*/
 //     if(body_param.object){
 //         console.log("inside body param");
 //         if(body_param.entry && 
@@ -80,9 +82,13 @@ app.post("/webhook",(req,res)=>{ //i want some
 //             }
 
 //     }
-
+    res.sendStatus(200);            //if remove comment than it should also removed
 });
 
-app.get("/",(req,res)=>{
+// app.get("/",(req,res)=>{
+//     res.status(200).send(webData);
+// });
+
+app.get("/webhook-data",(req,res)=>{
     res.status(200).send(webData);
 });
