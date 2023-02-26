@@ -1,10 +1,15 @@
 const express=require("express");
 const body_parser=require("body-parser");
 const axios=require("axios");
+const cors = require("cors");
+
 
 require('dotenv').config();
 
 const app=express().use(body_parser.json());
+
+app.use(cors());    // Enable CORS for all routes
+
 
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
