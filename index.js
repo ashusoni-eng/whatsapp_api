@@ -104,8 +104,7 @@ app.post("/webhook", (req, res) => {
       // Store the latest data in memory
       // Store the latest data in memory
       const newData = {
-        phone_no_id:
-          body_param.entry[0].changes[0].value.metadata.phone_number_id,
+        phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
         from: body_param.entry[0].changes[0].value.messages[0].from,
         msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
         rcv_time: body_param.entry[0].changes[0].value.messages[0].timestamp,
@@ -113,7 +112,10 @@ app.post("/webhook", (req, res) => {
       };
       updateLatestData(newData);
 
+      
       axios({
+        phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
+        from: body_param.entry[0].changes[0].value.messages[0].from,
         method: "POST",
         url:"https://graph.facebook.com/v15.0/" +phon_no_id +"/messages?access_token="+token,
         data: {
