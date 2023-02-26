@@ -91,18 +91,29 @@ app.post("/webhook",(req,res)=>{ //i want some
 
 //     }
         
-   // Store the latest data in memory
-   latestData = {
-    phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
-    from: body_param.entry[0].changes[0].value.messages[0].from,
-    msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
-  };
+
+if(body_param.object){
+            console.log("inside body param");
+            if(body_param.entry && 
+                body_param.entry[0].changes && 
+                body_param.entry[0].changes[0].value.messages && 
+                body_param.entry[0].changes[0].value.messages[0]  
+                ){
+                // Store the latest data in memory
+                latestData = {
+                    phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
+                    from: body_param.entry[0].changes[0].value.messages[0].from,
+                    msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
+                };
     
       // Emit an event to indicate that the latestData variable has been updated
     app.emit("webhook-data-update");
     
     
     res.sendStatus(200);            //if remove comment than it should also removed
+            }
+        }
+    
 });
 
 
