@@ -92,11 +92,11 @@ app.post("/webhook",(req,res)=>{ //i want some
 //     }
         
     // Store the latest data in memory
-    latestData = {
-        phone_no_id: phon_no_id,
-        from: from,
-        msg_body: msg_body,
-      };
+    // latestData = {
+    //     phone_no_id: phon_no_id,
+    //     from: from,
+    //     msg_body: msg_body,
+    //   };
 
     
       // Emit an event to indicate that the latestData variable has been updated
