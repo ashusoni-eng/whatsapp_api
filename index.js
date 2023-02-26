@@ -16,7 +16,10 @@ let latestData = null;
 
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
-let webData={};
+// Store all webhook data in memory
+let allData = {
+    messages: []
+  };
 
 
 
@@ -46,6 +49,7 @@ app.get("/webhook",(req,res)=>{
 app.post("/webhook",(req,res)=>{ //i want some 
 
     let body_param=req.body;
+
 
     // console.log(JSON.stringify(body_param,null,2));
     // webData= body_param;
@@ -105,9 +109,17 @@ if(body_param.object){
                     from: body_param.entry[0].changes[0].value.messages[0].from,
                     msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
                 };
+
+                    // Update the latest webhook data
+                function updateLatestData(newData) {
+                    allData.messages.push(newData);
+                    latestData = newData;
+                    app.emit("webhook-data-update");
+                }
+
     
       // Emit an event to indicate that the latestData variable has been updated
-    app.emit("webhook-data-update");
+    // app.emit("webhook-data-update");
     
     
     res.sendStatus(200);            //if remove comment than it should also removed
@@ -122,15 +134,23 @@ if(body_param.object){
 // });
 
 
+app.delete("/webhook-data", (req, res) => {
+    allData.messages = [];
+    res.sendStatus(200);
+  });
+  
+
+
 // Create a new route for the SSE stream
 app.get("/webhook-data",(req,res)=>{
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
-    if (latestData) {
-        res.write(`data: ${JSON.stringify(latestData)}\n\n`);
+    if (allData.messages.length > 0) {
+        allData.messages.forEach((data) => {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        });
       }
-
       const listener = () => {
         res.write(`data: ${JSON.stringify(latestData)}\n\n`);
       };
