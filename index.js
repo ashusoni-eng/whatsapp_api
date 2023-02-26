@@ -10,6 +10,9 @@ const app=express().use(body_parser.json());
 
 app.use(cors());    // Enable CORS for all routes
 
+// Store the latest webhook data in memory
+let latestData = null;
+
 
 const token=process.env.TOKEN;
 const mytoken=process.env.MYTOKEN;//prasath_token
@@ -87,13 +90,46 @@ app.post("/webhook",(req,res)=>{ //i want some
 //             }
 
 //     }
+        
+    // Store the latest data in memory
+    latestData = {
+        phone_no_id: phon_no_id,
+        from: from,
+        msg_body: msg_body,
+      };
+
+    
+      // Emit an event to indicate that the latestData variable has been updated
+    app.emit("webhook-data-update");
+    
+    
     res.sendStatus(200);            //if remove comment than it should also removed
 });
+
 
 // app.get("/",(req,res)=>{
 //     res.status(200).send(webData);
 // });
 
+
+// Create a new route for the SSE stream
 app.get("/webhook-data",(req,res)=>{
-    res.status(200).send(webData);
-});
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    if (latestData) {
+        res.write(`data: ${JSON.stringify(latestData)}\n\n`);
+      }
+
+      const listener = () => {
+        res.write(`data: ${JSON.stringify(latestData)}\n\n`);
+      };
+      app.on("webhook-data-update", listener);
+    
+      // Clean up the listener when the client closes the connection
+      req.on("close", () => {
+        app.off("webhook-data-update", listener);
+      });
+    });
+
+    // res.status(200).send(webData);
