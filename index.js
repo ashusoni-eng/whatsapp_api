@@ -50,6 +50,13 @@ app.post("/webhook",(req,res)=>{ //i want some
 
     let body_param=req.body;
 
+        // Update the latest webhook data
+        function updateLatestData(newData) {
+            allData.messages.push(newData);
+            latestData = newData;
+            app.emit("webhook-data-update");
+        }
+
 
     // console.log(JSON.stringify(body_param,null,2));
     // webData= body_param;
@@ -104,18 +111,15 @@ if(body_param.object){
                 body_param.entry[0].changes[0].value.messages[0]  
                 ){
                 // Store the latest data in memory
-                latestData = {
-                    phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
-                    from: body_param.entry[0].changes[0].value.messages[0].from,
-                    msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
-                };
+               // Store the latest data in memory
+      const newData = {
+        phone_no_id: body_param.entry[0].changes[0].value.metadata.phone_number_id,
+        from: body_param.entry[0].changes[0].value.messages[0].from,
+        msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
+      };
+      updateLatestData(newData);      
 
-                    // Update the latest webhook data
-                function updateLatestData(newData) {
-                    allData.messages.push(newData);
-                    latestData = newData;
-                    app.emit("webhook-data-update");
-                }
+                
 
     
       // Emit an event to indicate that the latestData variable has been updated
