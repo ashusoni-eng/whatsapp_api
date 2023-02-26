@@ -65,9 +65,9 @@ app.post("/webhook", (req, res) => {
   //                let from = body_param.entry[0].changes[0].value.messages[0].from;
   //                let msg_body = body_param.entry[0].changes[0].value.messages[0].text.body;
 
-  //                console.log("phone number "+phon_no_id);
-  //                console.log("from "+from);
-  //                console.log("boady param "+msg_body);
+                //  console.log("phone number "+phon_no_id);
+                //  console.log("from "+from);
+                //  console.log("boady param "+msg_body);
 
   //                axios({
   //                    method:"POST",
@@ -115,13 +115,12 @@ app.post("/webhook", (req, res) => {
 
       axios({
         method: "POST",
-        url:
-          "https://graph.facebook.com/v13.0/" +phon_no_id +"/messages?access_token="+token,
+        url:"https://graph.facebook.com/v15.0/" +phon_no_id +"/messages?access_token="+token,
         data: {
           messaging_product: "whatsapp",
           to: from,
           text: {
-            body: "Welcome! Thank you fomr your message.<br> We will contact you as soon as possible. Or you can call/message us on 07514074672 ",
+            body: "Welcome! Thank you fomr your message. We will contact you as soon as possible. Or you can call/message us on 07514074672 ",
           },
         },
         headers: {
