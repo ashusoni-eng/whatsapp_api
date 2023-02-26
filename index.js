@@ -104,12 +104,30 @@ app.post("/webhook", (req, res) => {
       // Store the latest data in memory
       // Store the latest data in memory
       const newData = {
-          phone_no_id:body_param.entry[0].changes[0].value.metadata.phone_number_id,
-          from: body_param.entry[0].changes[0].value.messages[0].from,
-          msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
-          rcv_time: body_param.entry[0].changes[0].value.messages[0].timestamp,
+        phone_no_id:
+          body_param.entry[0].changes[0].value.metadata.phone_number_id,
+        from: body_param.entry[0].changes[0].value.messages[0].from,
+        msg_body: body_param.entry[0].changes[0].value.messages[0].text.body,
+        rcv_time: body_param.entry[0].changes[0].value.messages[0].timestamp,
+        display_no:body_param.entry[0].changes[0].value.metadata.display_phone_number
       };
       updateLatestData(newData);
+
+      axios({
+        method: "POST",
+        url:
+          "https://graph.facebook.com/v13.0/" +phon_no_id +"/messages?access_token="+token,
+        data: {
+          messaging_product: "whatsapp",
+          to: from,
+          text: {
+            body: "Welcome! Thank you fomr your message.<br> We will contact you as soon as possible. Or you can call/message us on 07514074672 ",
+          },
+        },
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
       // Emit an event to indicate that the latestData variable has been updated
       // app.emit("webhook-data-update");
