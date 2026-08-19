@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit
+.env
+*.pem
+*.key
+
+# whatsapp-web.js session data (LocalAuth) and cache
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Runtime state
+queue.json
+queue.json.tmp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
