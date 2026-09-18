@@ -69,3 +69,13 @@ by chat id where possible — ids survive a group rename, names do not.
   restart it clean.
 - `queue.json` holds pending messages and is written atomically; it is runtime
   state and is not committed.
+
+## Patched dependency
+
+`whatsapp-web.js` 1.34.7 cannot send media: every media send fails with
+`Data passed to getter must include an id property`. The upstream fix
+([wwebjs/whatsapp-web.js#201923](https://github.com/wwebjs/whatsapp-web.js/pull/201923))
+is unreleased, so it is applied here as `patches/whatsapp-web.js+1.34.7.patch`
+via `patch-package` on `postinstall`. The version is pinned exactly so the
+patch cannot drift. When a release ships the fix, bump the version and delete
+the patch file.
