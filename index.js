@@ -262,7 +262,12 @@ const sendEntry = async (item) => {
 
   if (item.type === "media" && item.fileUrl) {
     const media = await MessageMedia.fromUrl(item.fileUrl);
-    if (item.fileUrl.endsWith(".pdf")) {
+    // Judge the type by the file path, not the whole URL: Healthixio links are
+    // signed and end in ?exp=...&sig=..., so endsWith(".pdf") on the URL failed
+    // and every PDF went out labelled as an image (WhatsApp rejected it).
+    let filePath = item.fileUrl;
+    try { filePath = new URL(item.fileUrl).pathname; } catch (_) {}
+    if (filePath.toLowerCase().endsWith(".pdf") || media.mimetype === "application/pdf") {
       media.mimetype = "application/pdf";
       media.filename = item.pdfName || "document.pdf";
     } else {
