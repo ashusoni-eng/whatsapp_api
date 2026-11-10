@@ -19,6 +19,13 @@ const READY_TIMEOUT_MS = 90 * 1000;
 const FLUSH_INTERVAL_MS = 30 * 1000; // periodically retry pending messages
 const MAX_ATTEMPTS = 5;
 
+// Terminal entries are history, not work. Keep them long enough to be useful
+// then drop them: queue.json is rewritten on every send, so its size is a
+// running I/O cost, and nothing ever removed failed entries before.
+const SENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const FAILED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
 // AI insights bot: inbound messages are forwarded to our backend, which decides
 // if the sender is a registered clinic user and returns a reply to send back.
 const INSIGHTS_URL = process.env.INSIGHTS_URL; // e.g. http://127.0.0.1:3000
@@ -45,7 +52,7 @@ const client = new Client({
 /* ------------------- PERSISTENT QUEUE ------------------- */
 // Each entry: { id, type:'text'|'media', formatnum, groupName, message, fileUrl,
 //               pdfName, status:'pending'|'sent'|'failed', attempts, createdAt,
-//               sentAt, error }
+//               sentAt, failedAt, error }
 //
 // `formatnum` is the WhatsApp chat id: "91XXXXXXXXXX@c.us" for a person,
 // "1234567890-1234567890@g.us" or "1203630XXXXXXXXXX@g.us" for a group. When a
@@ -75,6 +82,33 @@ const saveQueue = () => {
   }
 };
 
+// A terminal entry ages from the moment it reached that state. Entries written
+// before `failedAt` existed only have `createdAt`, so fall back to it.
+const terminalAt = (item) =>
+  Date.parse(item.failedAt || item.sentAt || item.createdAt);
+
+// Pending entries are the work still to do and are never pruned. Sent and
+// failed entries are dropped once past their retention window.
+const pruneQueue = () => {
+  const now = Date.now();
+  const before = queue.length;
+  queue = queue.filter((item) => {
+    if (item.status === "pending") return true;
+    const retention =
+      item.status === "failed" ? FAILED_RETENTION_MS : SENT_RETENTION_MS;
+    const at = terminalAt(item);
+    // An entry with an unparseable timestamp can never age out, so drop it
+    // rather than let it accumulate forever.
+    return Number.isFinite(at) && now - at < retention;
+  });
+  const dropped = before - queue.length;
+  if (dropped) {
+    saveQueue();
+    console.log(`Pruned ${dropped} old queue entries, ${queue.length} remain`);
+  }
+  return dropped;
+};
+
 const enqueue = (entry) => {
   const item = {
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
@@ -82,6 +116,7 @@ const enqueue = (entry) => {
     attempts: 0,
     createdAt: new Date().toISOString(),
     sentAt: null,
+    failedAt: null,
     error: null,
     ...entry,
   };
@@ -243,6 +278,7 @@ const sendEntry = async (item) => {
     const groupId = await resolveGroupId(item.groupName);
     if (!groupId) {
       item.status = "failed";
+      item.failedAt = new Date().toISOString();
       item.error = `Group not found: ${item.groupName}`;
       return false;
     }
@@ -255,6 +291,7 @@ const sendEntry = async (item) => {
     const isRegistered = await client.isRegisteredUser(item.formatnum);
     if (!isRegistered) {
       item.status = "failed";
+      item.failedAt = new Date().toISOString();
       item.error = "Not registered on WhatsApp";
       return false;
     }
@@ -319,6 +356,7 @@ const flushQueue = async () => {
         }
         if (item.attempts >= MAX_ATTEMPTS) {
           item.status = "failed";
+          item.failedAt = new Date().toISOString();
           console.error(`Giving up on ${item.id} after ${item.attempts} tries:`, err.message);
         } else {
           console.warn(`Send failed for ${item.id} (attempt ${item.attempts}), will retry:`, err.message);
@@ -326,13 +364,7 @@ const flushQueue = async () => {
       }
       saveQueue();
     }
-    // Prune sent entries older than 24h to keep the file small.
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const before = queue.length;
-    queue = queue.filter(
-      (q) => q.status !== "sent" || new Date(q.sentAt).getTime() > cutoff
-    );
-    if (queue.length !== before) saveQueue();
+    pruneQueue();
   } finally {
     flushing = false;
   }
@@ -512,6 +544,11 @@ app.get("/health", (req, res) => {
 
 /* ------------------- INITIALIZE ------------------- */
 loadQueue();
+// Prune on startup and on a timer, not only after a flush: flushQueue returns
+// early unless the client is ready, so an outage would otherwise leave nothing
+// trimming the queue for as long as it lasted.
+pruneQueue();
+setInterval(pruneQueue, PRUNE_INTERVAL_MS);
 setInterval(flushQueue, FLUSH_INTERVAL_MS); // retry pending messages periodically
 
 // Liveness probe: even with no messages in flight, the browser tab can die
