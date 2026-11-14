@@ -10,7 +10,14 @@ const app = express();
 app.use(cors());
 
 const port = process.env.PORT || 3000;
-const wwebVersion = "2.2412.54"; // pin a known-good WhatsApp Web version
+// WhatsApp logs out clients running a stale web version, which shows up as a
+// scan-then-immediately-LOGOUT loop that survives wiping .wwebjs_auth. The
+// previously pinned 2.2412.54 (Dec 2024) was eventually deleted upstream and
+// its remotePath started 404ing. Upstream prunes old builds steadily, so any
+// hard-coded pin rots; default to whatever WhatsApp itself serves, and set
+// WWEB_VERSION only to hold back a specific build from wppconnect-team/
+// wa-version if a future WhatsApp change breaks this library version.
+const wwebVersion = process.env.WWEB_VERSION || null;
 const QUEUE_FILE = path.join(__dirname, "queue.json");
 
 // If "authenticated" fires but "ready" does not within this window, the client
@@ -54,11 +61,14 @@ const client = new Client({
     // ready-timeout and liveness probe below still catch a truly dead tab.
     protocolTimeout: PROTOCOL_TIMEOUT_MS,
   },
-  // Pinning the web version makes the `ready` event fire reliably after restarts.
-  webVersionCache: {
-    type: "remote",
-    remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${wwebVersion}.html`,
-  },
+  ...(wwebVersion
+    ? {
+        webVersionCache: {
+          type: "remote",
+          remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${wwebVersion}.html`,
+        },
+      }
+    : {}),
 });
 
 /* ------------------- PERSISTENT QUEUE ------------------- */
