@@ -16,6 +16,8 @@ const QUEUE_FILE = path.join(__dirname, "queue.json");
 // If "authenticated" fires but "ready" does not within this window, the client
 // is stuck (the classic puppeteer sync hang). We exit so PM2 restarts clean.
 const READY_TIMEOUT_MS = 90 * 1000;
+const DISK_CACHE_BYTES = 100 * 1024 * 1024; // cap Chromium's disk caches
+const PROTOCOL_TIMEOUT_MS = 240 * 1000; // puppeteer default is 180s
 const FLUSH_INTERVAL_MS = 30 * 1000; // periodically retry pending messages
 const MAX_ATTEMPTS = 5;
 
@@ -35,12 +37,22 @@ const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
     headless: true, // IMPORTANT: never depend on a display (DISPLAY=:0) on a server
+    // Chromium's on-disk caches are uncapped by default. Left alone they grew
+    // to 1.4GB here, and managing that much cache on a 1GB box thrashes into
+    // swap until operations exceed protocolTimeout and the client never
+    // reaches `ready`. Cap them so the working set stays small.
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      `--disk-cache-size=${DISK_CACHE_BYTES}`,
+      `--media-cache-size=${DISK_CACHE_BYTES}`,
     ],
+    // A swapping browser can take minutes to answer. Fail slower than the
+    // default so a brief stall doesn't kill an otherwise healthy send; the
+    // ready-timeout and liveness probe below still catch a truly dead tab.
+    protocolTimeout: PROTOCOL_TIMEOUT_MS,
   },
   // Pinning the web version makes the `ready` event fire reliably after restarts.
   webVersionCache: {
@@ -584,7 +596,46 @@ const initializeClient = async (retries = 3) => {
   }
 };
 
+// Chromium regenerates these from scratch, but nothing ever removes them, and
+// `Code Cache` in particular is not governed by --disk-cache-size. Sweep them
+// when they get large so the daily PM2 restart keeps the session directory
+// bounded. The session itself lives in IndexedDB / Local Storage / Cookies and
+// is never touched here, so this never costs a QR re-scan.
+const DISPOSABLE_CACHE_DIRS = ["Cache", "Code Cache", "GPUCache"];
+const CACHE_SWEEP_THRESHOLD = 150 * 1024 * 1024;
+
+const dirSize = (dir) => {
+  let total = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    try {
+      total += e.isDirectory() ? dirSize(full) : fs.statSync(full).size;
+    } catch {
+      // a file Chromium removed mid-walk; it contributes nothing
+    }
+  }
+  return total;
+};
+
+const sweepBrowserCaches = () => {
+  const base = path.join(__dirname, ".wwebjs_auth", "session", "Default");
+  if (!fs.existsSync(base)) return;
+  for (const name of DISPOSABLE_CACHE_DIRS) {
+    const dir = path.join(base, name);
+    try {
+      if (!fs.existsSync(dir)) continue;
+      const size = dirSize(dir);
+      if (size < CACHE_SWEEP_THRESHOLD) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`Swept ${name}, freed ${Math.round(size / 1048576)}MB`);
+    } catch (err) {
+      console.warn(`Could not sweep ${name}:`, err.message);
+    }
+  }
+};
+
 app.listen(port, () => console.log("Server is Live on port " + port));
+sweepBrowserCaches(); // must run before Chromium launches
 initializeClient();
 
 // Don't let an unexpected error leave a zombie process — restart clean.
