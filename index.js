@@ -94,9 +94,13 @@ const BROWSER_ARGS = [
 
 if (LEAN_BROWSER) {
   BROWSER_ARGS.push(
-    // The single biggest saving: profile pictures and media thumbnails are
-    // decoded into the renderer's heap and never seen by anyone.
-    "--blink-settings=imagesEnabled=false",
+    // NOT included here: --blink-settings=imagesEnabled=false. It was the
+    // biggest memory saving on paper and it broke sending outright. WhatsApp
+    // Web builds a thumbnail for outgoing media by decoding it through an
+    // Image element; with decoding disabled that load event never fires, the
+    // page-side promise never settles, and every media send dies on
+    // protocolTimeout - which reads exactly like the CPU starvation we were
+    // chasing, while the CPU sits idle. Keep images on.
     "--renderer-process-limit=1",
     "--disable-extensions",
     "--disable-background-networking",
