@@ -393,6 +393,27 @@ const sendEntry = async (item) => {
 
   if (item.type === "media" && item.fileUrl) {
     const media = await MessageMedia.fromUrl(item.fileUrl);
+
+    // A single-page app answers a missing asset with its own index.html and a
+    // 200, so the download "succeeds" and hands back markup. The override
+    // below judges type by file extension, so that HTML gets relabelled as a
+    // PNG and sent - and WhatsApp rejects it with an error minified to "t",
+    // five retries and one undelivered message later. The text is the part
+    // that carries the information, so send it rather than nothing.
+    if (/^text\/html/i.test(media.mimetype || "")) {
+      console.warn(
+        `${item.id}: ${item.fileUrl} served HTML, not a file - sending text only`
+      );
+      if (item.message) {
+        await client.sendMessage(item.formatnum, item.message);
+        return true;
+      }
+      item.status = "failed";
+      item.failedAt = new Date().toISOString();
+      item.error = `fileUrl served text/html, not a file: ${item.fileUrl}`;
+      return false;
+    }
+
     // Judge the type by the file path, not the whole URL: Healthixio links are
     // signed and end in ?exp=...&sig=..., so endsWith(".pdf") on the URL failed
     // and every PDF went out labelled as an image (WhatsApp rejected it).
