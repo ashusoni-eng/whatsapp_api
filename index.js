@@ -29,6 +29,13 @@ const DISK_CACHE_BYTES = 100 * 1024 * 1024; // cap Chromium's disk caches
 const PROTOCOL_TIMEOUT_MS = 240 * 1000; // puppeteer default is 180s
 const FLUSH_INTERVAL_MS = 30 * 1000; // periodically retry pending messages
 const MAX_ATTEMPTS = 5;
+// One sick send costs up to PROTOCOL_TIMEOUT_MS. Without a budget a single
+// flush pass walks the whole backlog at that price - 19 pending messages meant
+// 76 minutes of grinding during which nothing else could send, and every one
+// of those minutes was CPU this host does not have. Cap the pass and stop
+// early once it is clear the browser, not the recipient, is the problem.
+const FLUSH_BUDGET_MS = 5 * 60 * 1000;
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 // Terminal entries are history, not work. Keep them long enough to be useful
 // then drop them: queue.json is rewritten on every send, so its size is a
@@ -42,6 +49,50 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const INSIGHTS_URL = process.env.INSIGHTS_URL; // e.g. http://127.0.0.1:3000
 const INSIGHTS_API_KEY = process.env.INSIGHTS_API_KEY;
 
+// Nothing in this browser is ever looked at by a human - it exists only to
+// drive WhatsApp Web's send path. Decoding avatars and thumbnails, running
+// translate/sync/telemetry and spreading across renderer processes is all
+// waste, and on a 1GB box that waste is what pushes Chromium into swap. The
+// swapping is in turn what burns the CPU budget. Set LEAN_BROWSER=0 to opt
+// back into a stock browser if something here ever proves load-bearing.
+const LEAN_BROWSER = process.env.LEAN_BROWSER !== "0";
+
+const BROWSER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  // Chromium's on-disk caches are uncapped by default. Left alone they grew
+  // to 1.4GB here, and managing that much cache on a 1GB box thrashes into
+  // swap until operations exceed protocolTimeout and the client never
+  // reaches `ready`. Cap them so the working set stays small.
+  `--disk-cache-size=${DISK_CACHE_BYTES}`,
+  `--media-cache-size=${DISK_CACHE_BYTES}`,
+];
+
+if (LEAN_BROWSER) {
+  BROWSER_ARGS.push(
+    // The single biggest saving: profile pictures and media thumbnails are
+    // decoded into the renderer's heap and never seen by anyone.
+    "--blink-settings=imagesEnabled=false",
+    "--renderer-process-limit=1",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-client-side-phishing-detection",
+    "--disable-sync",
+    "--disable-default-apps",
+    "--disable-translate",
+    "--disable-accelerated-2d-canvas",
+    "--disable-software-rasterizer",
+    "--disable-breakpad",
+    "--metrics-recording-only",
+    "--mute-audio",
+    "--no-first-run",
+    "--no-default-browser-check"
+  );
+}
+
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
@@ -50,14 +101,7 @@ const client = new Client({
     // to 1.4GB here, and managing that much cache on a 1GB box thrashes into
     // swap until operations exceed protocolTimeout and the client never
     // reaches `ready`. Cap them so the working set stays small.
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      `--disk-cache-size=${DISK_CACHE_BYTES}`,
-      `--media-cache-size=${DISK_CACHE_BYTES}`,
-    ],
+    args: BROWSER_ARGS,
     // A swapping browser can take minutes to answer. Fail slower than the
     // default so a brief stall doesn't kill an otherwise healthy send; the
     // ready-timeout and liveness probe below still catch a truly dead tab.
@@ -356,14 +400,23 @@ const flushQueue = async () => {
   flushing = true;
   try {
     const pending = queue.filter((q) => q.status === "pending");
+    const startedAt = Date.now();
+    let consecutiveFailures = 0;
     for (const item of pending) {
       if (!client.isReady) break; // client died mid-flush; stop, retry later
+      if (Date.now() - startedAt > FLUSH_BUDGET_MS) {
+        console.warn(
+          `Flush budget spent; leaving the rest pending for the next pass`
+        );
+        break;
+      }
       item.attempts += 1;
       try {
         const ok = await sendEntry(item);
         if (ok) {
           item.status = "sent";
           item.sentAt = new Date().toISOString();
+          consecutiveFailures = 0;
           console.log(`Sent queued message ${item.id} to ${item.formatnum}`);
         } else {
           console.log(`Dropping ${item.id}: ${item.error}`);
@@ -384,6 +437,16 @@ const flushQueue = async () => {
           console.error(`Giving up on ${item.id} after ${item.attempts} tries:`, err.message);
         } else {
           console.warn(`Send failed for ${item.id} (attempt ${item.attempts}), will retry:`, err.message);
+        }
+        // A bad number fails on its own; the browser being unwell fails every
+        // message in a row. Treat a run of failures as the latter and stop,
+        // rather than paying the timeout again for each message behind it.
+        if ((consecutiveFailures += 1) >= MAX_CONSECUTIVE_FAILURES) {
+          saveQueue();
+          console.error(
+            `${consecutiveFailures} sends failed in a row; pausing this flush pass`
+          );
+          break;
         }
       }
       saveQueue();
