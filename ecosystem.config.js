@@ -10,9 +10,17 @@ module.exports = {
       restart_delay: 5000, // wait 5s between restarts
       exp_backoff_restart_delay: 2000, // back off if it keeps crashing fast
 
-      // Clean managed daily restart at 4:00 AM — replaces the OS stop/start.
-      // PM2 brings the process straight back up with the saved session.
-      cron_restart: "0 4 * * *",
+      // No daily cron_restart. A Chromium cold boot plus WhatsApp Web's initial
+      // sync is the single most expensive thing this service does, and on a
+      // burstable host paid for in CPU credits, spending that every night buys
+      // nothing: max_memory_restart below already catches a leaking browser,
+      // and the chat sweep now keeps the IndexedDB store from growing at all,
+      // which is what the nightly restart was really papering over.
+
+      // Our code exits 1 when it wants a fresh process. Exit 0 means the
+      // opposite - it has decided there is no point running (nobody scanned
+      // the QR) - so treat that as a stop, not a restart loop.
+      stop_exit_codes: [0],
 
       // Restart if memory leaks (puppeteer/chromium can grow over days)
       max_memory_restart: "600M",

@@ -47,6 +47,11 @@ const CHAT_SWEEP_INTERVAL_MS =
 const CHAT_KEEP_MS = (Number(process.env.CHAT_KEEP_HOURS) || 0) * 60 * 60 * 1000;
 const CHAT_SWEEP_DELAY_MS = 15 * 60 * 1000; // let the client settle after boot
 const CHAT_SWEEP_PAUSE_MS = 250; // breathe between deletions
+// A browser parked on a login screen still costs a browser. Nobody is going to
+// scan a QR at 4am, so don't hold one open all night - exit 0 and let PM2 stop
+// the app (see stop_exit_codes in ecosystem.config.js) until someone is there
+// to scan. On a host this starved, idling is how the CPU budget recovers.
+const QR_IDLE_MS = (Number(process.env.QR_IDLE_MINUTES) || 20) * 60 * 1000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 // Terminal entries are history, not work. Keep them long enough to be useful
@@ -549,13 +554,27 @@ const sweepChats = async () => {
   return swept;
 };
 
+let qrIdleTimer = null;
 client.on("qr", (qr) => {
   console.log("Client QR Code:");
   qrcode.generate(qr, { small: true });
+  // The QR rotates every ~50s and this fires each time; arm the deadline once,
+  // on the first one, so it measures how long nobody has scanned rather than
+  // how long since the last refresh.
+  if (!qrIdleTimer) {
+    qrIdleTimer = setTimeout(() => {
+      console.error(
+        `No scan after ${QR_IDLE_MS / 60000} minutes. Stopping rather than ` +
+          `holding a browser open on a login screen. Start again when ready to scan.`
+      );
+      process.exit(0);
+    }, QR_IDLE_MS);
+  }
 });
 
 client.on("authenticated", () => {
   console.log("Client authenticated!");
+  clearTimeout(qrIdleTimer);
   armWatchdog(); // start the stuck-detection timer
 });
 
