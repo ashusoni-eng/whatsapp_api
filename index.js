@@ -52,6 +52,11 @@ const CHAT_SWEEP_PAUSE_MS = 250; // breathe between deletions
 // the app (see stop_exit_codes in ecosystem.config.js) until someone is there
 // to scan. On a host this starved, idling is how the CPU budget recovers.
 const QR_IDLE_MS = (Number(process.env.QR_IDLE_MINUTES) || 20) * 60 * 1000;
+// A first sweep against a large backlog can run for a long time on a slow
+// host. Bound it so it can never overlap its own next cycle or monopolise the
+// browser, and let the remainder fall to the following pass - the work is
+// idempotent, so stopping early simply means finishing later.
+const CHAT_SWEEP_BUDGET_MS = 30 * 60 * 1000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 // Terminal entries are history, not work. Keep them long enough to be useful
@@ -509,9 +514,21 @@ const listChatsLite = () =>
 // Both of these are local-only - the same as "Clear chat" / "Delete chat" in
 // the app. The recipient keeps their copy, so clearing our side never costs
 // anyone the report we sent them.
+let sweeping = false;
 const sweepChats = async () => {
-  if (!client.isReady) return 0;
+  // The cycle timer and the manual endpoint can both land here. Two sweeps
+  // walking the same chat list at once is pure duplicated work, and on this
+  // host duplicated work is what the whole exercise is trying to avoid.
+  if (sweeping || !client.isReady) return 0;
+  sweeping = true;
+  try {
+    return await runChatSweep();
+  } finally {
+    sweeping = false;
+  }
+};
 
+const runChatSweep = async () => {
   let chats;
   try {
     chats = await listChatsLite();
@@ -530,8 +547,15 @@ const sweepChats = async () => {
   }
 
   let swept = 0;
+  const startedAt = Date.now();
   for (const chat of stale) {
     if (!client.isReady) break; // don't fight a dying browser
+    if (Date.now() - startedAt > CHAT_SWEEP_BUDGET_MS) {
+      console.warn(
+        `Chat sweep: budget spent after ${swept}/${stale.length}; resuming next cycle`
+      );
+      break;
+    }
     try {
       await client.pupPage.evaluate(
         (id, isGroup) =>
