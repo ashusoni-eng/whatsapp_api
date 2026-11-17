@@ -22,7 +22,9 @@ const QUEUE_FILE = path.join(__dirname, "queue.json");
 
 // If "authenticated" fires but "ready" does not within this window, the client
 // is stuck (the classic puppeteer sync hang). We exit so PM2 restarts clean.
-const READY_TIMEOUT_MS = 90 * 1000;
+// Kept generous: on a CPU-throttled host the initial WhatsApp Web sync is slow,
+// and a too-eager restart just burns more CPU booting Chromium again.
+const READY_TIMEOUT_MS = (Number(process.env.READY_TIMEOUT_SEC) || 360) * 1000;
 const DISK_CACHE_BYTES = 100 * 1024 * 1024; // cap Chromium's disk caches
 const PROTOCOL_TIMEOUT_MS = 240 * 1000; // puppeteer default is 180s
 const FLUSH_INTERVAL_MS = 30 * 1000; // periodically retry pending messages
