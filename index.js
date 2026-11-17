@@ -556,6 +556,17 @@ const runChatSweep = async () => {
       );
       break;
     }
+    // Sending is the product; clearing old chats is housekeeping. A sweep
+    // holds the browser long enough to time a send out, so the moment real
+    // work shows up, stand down. The unswept chats keep until the next cycle;
+    // a late report does not keep.
+    const waiting = queue.filter((q) => q.status === "pending").length;
+    if (waiting) {
+      console.log(
+        `Chat sweep: yielding to ${waiting} pending message(s) after ${swept}/${stale.length}`
+      );
+      break;
+    }
     try {
       await client.pupPage.evaluate(
         (id, isGroup) =>
