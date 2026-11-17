@@ -35,6 +35,18 @@ const MAX_ATTEMPTS = 5;
 // of those minutes was CPU this host does not have. Cap the pass and stop
 // early once it is clear the browser, not the recipient, is the problem.
 const FLUSH_BUDGET_MS = 5 * 60 * 1000;
+// WhatsApp Web mirrors chat history into the browser's IndexedDB, and that
+// store is what grows without bound - 236MB here, which is what pushed this
+// host into swap. Nothing in this service reads stored history (inbound
+// messages are handled live on the `message` event), so the local copy is
+// pure cost. Wipe it on a schedule and the store stays flat forever.
+// CHAT_KEEP_HOURS=0 keeps nothing, which is the point; set it higher to
+// retain recent chats instead.
+const CHAT_SWEEP_INTERVAL_MS =
+  (Number(process.env.CHAT_SWEEP_HOURS) || 24) * 60 * 60 * 1000;
+const CHAT_KEEP_MS = (Number(process.env.CHAT_KEEP_HOURS) || 0) * 60 * 60 * 1000;
+const CHAT_SWEEP_DELAY_MS = 15 * 60 * 1000; // let the client settle after boot
+const CHAT_SWEEP_PAUSE_MS = 250; // breathe between deletions
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 // Terminal entries are history, not work. Keep them long enough to be useful
@@ -472,6 +484,71 @@ const armWatchdog = () => {
 };
 
 /* ------------------- CLIENT EVENT HANDLERS ------------------- */
+/* ------------------- CHAT / MEDIA RETENTION ------------------- */
+// Deliberately not client.getChats(): that serializes every chat in full
+// (contacts, last message, labels) across the CDP bridge, which is exactly the
+// kind of work this host cannot afford. Read the three fields we need straight
+// off the in-page collection instead.
+const listChatsLite = () =>
+  client.pupPage.evaluate(() => {
+    const chats = window.require("WAWebCollections").Chat.getModelsArray();
+    return chats
+      .map((c) => ({
+        id: c.id && c.id._serialized,
+        t: c.t || 0,
+        isGroup: !!c.isGroup,
+      }))
+      .filter((c) => c.id);
+  });
+
+// Both of these are local-only - the same as "Clear chat" / "Delete chat" in
+// the app. The recipient keeps their copy, so clearing our side never costs
+// anyone the report we sent them.
+const sweepChats = async () => {
+  if (!client.isReady) return 0;
+
+  let chats;
+  try {
+    chats = await listChatsLite();
+  } catch (err) {
+    console.warn("Chat sweep: could not list chats:", err.message);
+    return 0;
+  }
+
+  const cutoff = CHAT_KEEP_MS
+    ? Math.floor((Date.now() - CHAT_KEEP_MS) / 1000)
+    : Infinity;
+  const stale = chats.filter((c) => c.t < cutoff);
+  if (!stale.length) {
+    console.log(`Chat sweep: nothing to clear (${chats.length} chats)`);
+    return 0;
+  }
+
+  let swept = 0;
+  for (const chat of stale) {
+    if (!client.isReady) break; // don't fight a dying browser
+    try {
+      await client.pupPage.evaluate(
+        (id, isGroup) =>
+          // Deleting a group chat would drop us out of a group we still need
+          // to send to, so groups get their messages cleared instead.
+          isGroup
+            ? window.WWebJS.sendClearChat(id)
+            : window.WWebJS.sendDeleteChat(id),
+        chat.id,
+        chat.isGroup
+      );
+      swept += 1;
+    } catch (err) {
+      console.warn(`Chat sweep: ${chat.id} failed:`, err.message);
+    }
+    await new Promise((r) => setTimeout(r, CHAT_SWEEP_PAUSE_MS));
+  }
+
+  console.log(`Chat sweep: cleared ${swept}/${stale.length} chats`);
+  return swept;
+};
+
 client.on("qr", (qr) => {
   console.log("Client QR Code:");
   qrcode.generate(qr, { small: true });
@@ -482,11 +559,23 @@ client.on("authenticated", () => {
   armWatchdog(); // start the stuck-detection timer
 });
 
+let chatSweepTimer = null;
 client.on("ready", () => {
   console.log("Client is ready!");
   client.isReady = true;
   clearTimeout(readyWatchdog);
   flushQueue();
+  // Sweep shortly after boot, then on a cycle. The delay keeps this off the
+  // CPU while WhatsApp Web is still doing its initial sync.
+  if (!chatSweepTimer) {
+    setTimeout(() => {
+      sweepChats().catch((e) => console.warn("Chat sweep failed:", e.message));
+      chatSweepTimer = setInterval(
+        () => sweepChats().catch((e) => console.warn("Chat sweep failed:", e.message)),
+        CHAT_SWEEP_INTERVAL_MS
+      );
+    }, CHAT_SWEEP_DELAY_MS);
+  }
 });
 
 client.on("auth_failure", (msg) => {
@@ -619,6 +708,19 @@ app.post("/message", (req, res) => {
 });
 
 // Health / status endpoint for monitoring (requires API key)
+// Manual trigger for the retention sweep, so it can be run and watched on
+// demand rather than only on its cycle.
+app.get("/sweep-chats", async (req, res) => {
+  if (!authOk(req)) return res.status(401).send("Invalid Api");
+  if (!client.isReady) return res.status(503).json({ error: "client not ready" });
+  try {
+    const swept = await sweepChats();
+    res.json({ swept });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/health", (req, res) => {
   if (!authOk(req)) return res.status(401).send("Invalid Api");
   res.json({
